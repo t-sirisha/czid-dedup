@@ -30,7 +30,7 @@ macro_rules! box_bail {
 }
 
 macro_rules! dedup {
-    ($fastx:tt, $fastx_type_r1:expr, $input_r1:expr, $output_r1:expr, $inputs:expr, $outputs:expr, $clusters:expr) => {{
+    ($fastx:tt, $fastx_type_r1:expr, $input_r1:expr, $output_r1:expr, $inputs:expr, $outputs:expr, $clusters:expr, $use_revcomp:expr) => {{
         let records_r1 = $fastx::Reader::from_file($input_r1).unwrap().records();
         let writer_r1 = $fastx::Writer::to_file($output_r1).unwrap();
         match ($inputs.next(), $outputs.next()) {
@@ -46,9 +46,9 @@ macro_rules! dedup {
                 let records_r2 = $fastx::Reader::from_file(input_r2).unwrap().records();
                 let writer_r2 = $fastx::Writer::to_file(output_r2).unwrap();
                 let records = paired::PairedRecords::new(records_r1, records_r2);
-                pair(records, writer_r1, writer_r2, &mut $clusters)
+                pair(records, writer_r1, writer_r2, &mut $clusters, $use_revcomp)
             }
-            (None, None) => single(records_r1, writer_r1, &mut $clusters),
+            (None, None) => single(records_r1, writer_r1, &mut $clusters, $use_revcomp),
             _ => panic!("must have the same number of inputs and outputs"),
         }
     }};
@@ -63,6 +63,7 @@ fn single<
     records: R,
     mut writer: S,
     clusters: &mut clusters::Clusters<U>,
+    use_revcomp: bool, // add boolean revcomp param
 ) -> Result<(), Box<dyn Error>> {
     for result in records {
         let record = box_bail!(result);
@@ -70,7 +71,7 @@ fn single<
             .check()
             .map_err(|err| simple_error::simple_error!(err)));
 
-        let result = clusters.insert_single(&record);
+        let result = clusters.insert_single(&record, use_revcomp);
         if box_bail!(result) {
             box_bail!(writer.write_record(&record));
         }
@@ -88,6 +89,7 @@ fn pair<
     mut writer_r1: S,
     mut writer_r2: S,
     clusters: &mut clusters::Clusters<U>,
+    use_revcomp: bool, // add boolean revcomp param
 ) -> Result<(), Box<dyn Error>> {
     for result in records {
         let record = box_bail!(result);
@@ -96,7 +98,7 @@ fn pair<
             .check()
             .map_err(|err| simple_error::simple_error!(&err)));
 
-        let result = clusters.insert_pair(&record);
+        let result = clusters.insert_pair(&record, use_revcomp);
         if box_bail!(result) {
             box_bail!(writer_r1.write_record(record.r1()));
             box_bail!(writer_r2.write_record(record.r2()));
@@ -154,6 +156,13 @@ fn run_dedup<T: Into<std::ffi::OsString> + Clone, R: IntoIterator<Item = T>>(
                 .help("Length of the prefix to consider")
                 .takes_value(true),
         )
+        .arg(
+            Arg::with_name("revcomp")
+                .short("r")
+                .long("reverse-complement")
+                .help("Clusters using reverse complement also")
+                .takes_value(false)
+        )
         .get_matches_from(args);
 
     // presence guarunteed by clap
@@ -166,6 +175,7 @@ fn run_dedup<T: Into<std::ffi::OsString> + Clone, R: IntoIterator<Item = T>>(
         .map(|n| n.parse::<usize>().unwrap());
     let input_r1 = inputs.next().unwrap();
     let output_r1 = outputs.next().unwrap();
+    let mut use_revcomp = matches.is_present("revcomp");
 
     let bytes = File::open(input_r1).unwrap().metadata().unwrap().len() as usize;
     // 400 is based on the bytes per record of an example file, should be reasonable
@@ -180,7 +190,8 @@ fn run_dedup<T: Into<std::ffi::OsString> + Clone, R: IntoIterator<Item = T>>(
             output_r1,
             inputs,
             outputs,
-            clusters
+            clusters,
+            use_revcomp
         ),
         fastx::FastxType::Fastq => dedup!(
             fastq,
@@ -189,7 +200,8 @@ fn run_dedup<T: Into<std::ffi::OsString> + Clone, R: IntoIterator<Item = T>>(
             output_r1,
             inputs,
             outputs,
-            clusters
+            clusters,
+            use_revcomp
         ),
         fastx::FastxType::Invalid => Err(Box::new(simple_error::simple_error!(
             "input file is not a valid FASTA or FASTQ file"

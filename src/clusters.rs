@@ -5,6 +5,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io;
+use bio::alphabets::dna::revcomp;
 
 use super::fastx;
 use super::paired::PairedRecord;
@@ -23,16 +24,21 @@ pub struct Clusters<T: io::Write> {
 }
 
 impl<T: std::io::Write> Clusters<T> {
-    fn insert_record(&mut self, seq_hash: u64, id: String) -> Result<bool, csv::Error> {
+    fn insert_record(&mut self, seq_hash: u64, id: String, is_revcomp: bool) -> Result<bool, csv::Error> {
         self.total_records += 1;
         match self.cluster_map.get_mut(&seq_hash) {
-            Some(mut cluster) => {
+            Some(cluster) => {
                 cluster.size += 1;
                 self.cluster_csv_writer
                     .as_mut()
                     .map(|cluster_csv_writer| {
+                        let id_entry = if is_revcomp {
+                            format!("{} (rc)", id) // Mark revcomp sequences
+                        } else {
+                            id.clone()
+                        };
                         cluster_csv_writer
-                            .write_record(vec![&cluster.id, &id])
+                            .write_record(vec![&cluster.id, &id_entry])
                             .map(|_| false)
                     })
                     .unwrap_or(Ok(false))
@@ -50,6 +56,7 @@ impl<T: std::io::Write> Clusters<T> {
         }
     }
 
+
     fn get_prefix<'a, 'b>(&'a self, seq: &'b [u8]) -> &'b [u8] {
         let seq_length = seq.len();
         let prefix_length = self
@@ -59,23 +66,64 @@ impl<T: std::io::Write> Clusters<T> {
         &seq[..prefix_length]
     }
 
-    pub fn insert_single<R: fastx::Record>(&mut self, record: &R) -> Result<bool, csv::Error> {
+    pub fn insert_single<R: fastx::Record>(&mut self, record: &R, use_revcomp: bool) -> Result<bool, csv::Error> {
+        let seq = record.seq();
+        let mut rev_seq;
+    
+        // determine the canonical sequence (either original or reverse complement)
+        let (canonical_seq, is_revcomp) = if use_revcomp {
+            rev_seq = revcomp(seq);
+            if seq <= rev_seq.as_slice() { 
+                (seq, false) // Original sequence is canonical
+            } else {
+                (rev_seq.as_slice(), true) // Reverse complement is canonical
+            }
+        } else {
+            (seq, false) // Use original sequence
+        };
+    
+        // Compute hash for the canonical sequence
         let mut seq_hasher = DefaultHasher::new();
-        Hash::hash_slice(self.get_prefix(record.seq()), &mut seq_hasher);
+        Hash::hash_slice(self.get_prefix(canonical_seq), &mut seq_hasher);
         let seq_hash = seq_hasher.finish();
-        self.insert_record(seq_hash, record.id().to_owned())
+    
+        // Ensure `insert_record()` supports `is_revcomp`
+        self.insert_record(seq_hash, record.id().to_owned(), is_revcomp)
     }
 
     pub fn insert_pair<R: fastx::Record>(
         &mut self,
         record: &PairedRecord<R>,
+        use_revcomp: bool,
     ) -> Result<bool, csv::Error> {
+        let r1_seq = record.r1().seq();
+        let r2_seq = record.r2().seq();
+        
+        let mut r1_revcomp;
+        let mut r2_revcomp;
+        
+        // Reverse complement sequences only if use_revcomp is set
+        let (r1_canon, r2_canon, is_revcomp) = if use_revcomp {
+            r1_revcomp = revcomp(r1_seq);
+            r2_revcomp = revcomp(r2_seq);
+    
+            // Choose the lexicographically smaller pair (canonical)
+            if (r1_seq, r2_seq) < (r1_revcomp.as_slice(), r2_revcomp.as_slice()) {
+                (r1_revcomp.as_slice(), r2_revcomp.as_slice(), true) // Reverse complement pair is canonical
+            } else {
+                (r1_seq, r2_seq, false) // Original sequences are canonical
+            }
+        } else {
+            (r1_seq, r2_seq, false) // Use original sequences
+        };
+    
         let mut seq_hasher = DefaultHasher::new();
-        Hash::hash_slice(self.get_prefix(record.r1().seq()), &mut seq_hasher);
+        Hash::hash_slice(self.get_prefix(r1_canon), &mut seq_hasher);
         Hash::hash(&0, &mut seq_hasher);
-        Hash::hash_slice(self.get_prefix(record.r2().seq()), &mut seq_hasher);
+        Hash::hash_slice(self.get_prefix(r2_canon), &mut seq_hasher);
         let seq_hash = seq_hasher.finish();
-        self.insert_record(seq_hash, record.id().to_owned())
+        
+        self.insert_record(seq_hash, record.id().to_owned(), is_revcomp)
     }
 
     pub fn unique_records(&self) -> u64 {
@@ -126,7 +174,7 @@ impl<T: std::io::Write> Clusters<T> {
             prefix_length_opt,
         })
     }
-}
+    }
 
 impl Clusters<File> {
     pub fn from_file<P: AsRef<std::path::Path>>(
