@@ -12,6 +12,7 @@ bio = "0.32.0"
 clap = "2.33.3"
 csv = "1.1"
 simple-error = "0.2.2"
+flate2 = "1.0"  # for gzip
 
 [dev-dependencies]
 rand = "0.7.3"

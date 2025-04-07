@@ -1,12 +1,25 @@
 use bio::io::{fasta, fastq};
 use std::fs::File;
-use std::io::prelude::*;
-use std::io::Write;
+use std::io::{BufReader, Read, Write};
+use flate2::read::MultiGzDecoder;
 
 pub trait Record {
     fn id(&self) -> &str;
     fn seq(&self) -> &[u8];
     fn check(&self) -> Result<(), &str>;
+}
+
+
+pub fn read_gz<P: AsRef<std::path::Path>>(path: P) -> Box<dyn Read> {
+    let file = File::open(&path).expect("failed to open input file");
+    let buf = BufReader::new(file);
+    let path_str = path.as_ref().to_string_lossy();
+
+    if path_str.ends_with(".gz") {
+        Box::new(MultiGzDecoder::new(buf))
+    } else {
+        Box::new(buf)
+    }
 }
 
 impl Record for fasta::Record {
@@ -61,14 +74,10 @@ pub enum FastxType {
 }
 
 pub fn fastx_type<P: AsRef<std::path::Path>>(path: P) -> Result<FastxType, std::io::Error> {
-    let mut file = match File::open(path) {
-        Ok(f) => f,
-        Err(err) => return Err(err),
-    };
-    let mut byte = [0; 1];
-    if let Err(err) = file.read(&mut byte) {
-        return Err(err);
-    }
+    let reader: Box<dyn Read> = read_gz(&path);
+    let mut buf_reader = BufReader::new(reader);
+    let mut byte = [0u8; 1];
+    buf_reader.read_exact(&mut byte)?;
 
     match byte[0] as char {
         '>' => Ok(FastxType::Fasta),
@@ -76,6 +85,7 @@ pub fn fastx_type<P: AsRef<std::path::Path>>(path: P) -> Result<FastxType, std::
         _ => Ok(FastxType::Invalid),
     }
 }
+
 
 impl std::fmt::Display for FastxType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

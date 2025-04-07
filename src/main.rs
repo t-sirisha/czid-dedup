@@ -31,8 +31,10 @@ macro_rules! box_bail {
 
 macro_rules! dedup {
     ($fastx:tt, $fastx_type_r1:expr, $input_r1:expr, $output_r1:expr, $inputs:expr, $outputs:expr, $clusters:expr, $use_revcomp:expr) => {{
-        let records_r1 = $fastx::Reader::from_file($input_r1).unwrap().records();
+        let reader_r1 = fastx::read_gz($input_r1); // handle input gzipped files
+        let records_r1 = $fastx::Reader::new(reader_r1).records();
         let writer_r1 = $fastx::Writer::to_file($output_r1).unwrap();
+        //let writer_r1 = $fastx::Writer::new(fastx::write_gz($output_r1));
         match ($inputs.next(), $outputs.next()) {
             (Some(input_r2), Some(output_r2)) => {
                 let fastx_type_r2 = fastx::fastx_type(input_r2).unwrap();
@@ -43,8 +45,10 @@ macro_rules! dedup {
                     );
                     return Err(Box::new(simple_error::simple_error!(message)));
                 }
-                let records_r2 = $fastx::Reader::from_file(input_r2).unwrap().records();
+                let reader_r2 = fastx::read_gz(input_r2); // handle input gzipped files
+                let records_r2 = $fastx::Reader::new(reader_r2).records();
                 let writer_r2 = $fastx::Writer::to_file(output_r2).unwrap();
+                //let writer_r2 = $fastx::Writer::new(fastx::write_gz(output_r2));
                 let records = paired::PairedRecords::new(records_r1, records_r2);
                 pair(records, writer_r1, writer_r2, &mut $clusters, $use_revcomp)
             }
@@ -175,7 +179,7 @@ fn run_dedup<T: Into<std::ffi::OsString> + Clone, R: IntoIterator<Item = T>>(
         .map(|n| n.parse::<usize>().unwrap());
     let input_r1 = inputs.next().unwrap();
     let output_r1 = outputs.next().unwrap();
-    let mut use_revcomp = matches.is_present("revcomp");
+    let use_revcomp = matches.is_present("revcomp");
 
     let bytes = File::open(input_r1).unwrap().metadata().unwrap().len() as usize;
     // 400 is based on the bytes per record of an example file, should be reasonable

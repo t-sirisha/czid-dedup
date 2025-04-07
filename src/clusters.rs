@@ -68,7 +68,7 @@ impl<T: std::io::Write> Clusters<T> {
 
     pub fn insert_single<R: fastx::Record>(&mut self, record: &R, use_revcomp: bool) -> Result<bool, csv::Error> {
         let seq = record.seq();
-        let mut rev_seq;
+        let rev_seq;
     
         // determine the canonical sequence (either original or reverse complement)
         let (canonical_seq, is_revcomp) = if use_revcomp {
@@ -99,8 +99,8 @@ impl<T: std::io::Write> Clusters<T> {
         let r1_seq = record.r1().seq();
         let r2_seq = record.r2().seq();
         
-        let mut r1_revcomp;
-        let mut r2_revcomp;
+        let r1_revcomp;
+        let r2_revcomp;
         
         // Reverse complement sequences only if use_revcomp is set
         let (r1_canon, r2_canon, is_revcomp) = if use_revcomp {
